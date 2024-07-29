@@ -36,5 +36,6 @@ func (vf *vendorFilter) Match(blockDevice *block.Disk) bool {
 	if blockDevice.Vendor != "" && utils.MatchesIgnoredCase(vf.vendors, blockDevice.Vendor) {
 		return true
 	}
+	// HA! longhorn also appears here (e.g.: E:ID_PATH=ip-10.52.0.21:3260-iscsi-iqn.2019-10.io.longhorn:pvc-c781f54b-3774-4a67-bdca-d3465383cc60-lun-1)
 	return blockDevice.BusPath != "" && utils.ContainsIgnoredCase(vf.vendors, blockDevice.BusPath)
 }

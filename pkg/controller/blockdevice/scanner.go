@@ -13,20 +13,22 @@ import (
 
 	diskv1 "github.com/harvester/node-disk-manager/pkg/apis/harvesterhci.io/v1beta1"
 	"github.com/harvester/node-disk-manager/pkg/block"
-	"github.com/harvester/node-disk-manager/pkg/filter"
 	ctldiskv1 "github.com/harvester/node-disk-manager/pkg/generated/controllers/harvesterhci.io/v1beta1"
+
+	ctlcorev1 "github.com/rancher/wrangler/v2/pkg/generated/controllers/core/v1"
+
+	"sigs.k8s.io/yaml"
 )
 
 type Scanner struct {
-	NodeName             string
-	Namespace            string
-	Blockdevices         ctldiskv1.BlockDeviceController
-	BlockInfo            block.Info
-	ExcludeFilters       []*filter.Filter
-	AutoProvisionFilters []*filter.Filter
-	Cond                 *sync.Cond
-	Shutdown             bool
-	TerminatedChannels   *chan bool
+	NodeName           string
+	Namespace          string
+	ConfigMapCache     ctlcorev1.ConfigMapController
+	Blockdevices       ctldiskv1.BlockDeviceController
+	BlockInfo          block.Info
+	Cond               *sync.Cond
+	Shutdown           bool
+	TerminatedChannels *chan bool
 }
 
 type deviceWithAutoProvision struct {
@@ -36,23 +38,22 @@ type deviceWithAutoProvision struct {
 
 func NewScanner(
 	nodeName, namespace string,
+	configMapCache ctlcorev1.ConfigMapController,
 	bds ctldiskv1.BlockDeviceController,
 	block block.Info,
-	excludeFilters, autoProvisionFilters []*filter.Filter,
 	cond *sync.Cond,
 	shutdown bool,
 	ch *chan bool,
 ) *Scanner {
 	return &Scanner{
-		NodeName:             nodeName,
-		Namespace:            namespace,
-		Blockdevices:         bds,
-		BlockInfo:            block,
-		ExcludeFilters:       excludeFilters,
-		AutoProvisionFilters: autoProvisionFilters,
-		Cond:                 cond,
-		Shutdown:             shutdown,
-		TerminatedChannels:   ch,
+		NodeName:           nodeName,
+		Namespace:          namespace,
+		ConfigMapCache:     configMapCache,
+		Blockdevices:       bds,
+		BlockInfo:          block,
+		Cond:               cond,
+		Shutdown:           shutdown,
+		TerminatedChannels: ch,
 	}
 }
 
@@ -235,16 +236,49 @@ func convertBlockDeviceListToMap(bdList *diskv1.BlockDeviceList) (map[string]*di
 	return bdMap, wwns
 }
 
+type ExcludeFilter struct {
+	Hostname       string   `json:"hostname,omitempty"`
+	ExcludeDevices []string `json:"excludeDevices,omitempty"`
+	ExcludeLabels  []string `json:"excludeLabels,omitempty"`
+	ExcludeVendors []string `json:"excludeVendors,omitempty"`
+	ExcludePaths   []string `json:"excludePaths,omitempty"`
+}
+
 // ApplyExcludeFiltersForPartition check the status of disk for every
 // registered exclude filters. If the disk meets one of the criteria, it
 // returns true.
 func (s *Scanner) ApplyExcludeFiltersForDisk(disk *block.Disk) bool {
-	for _, filter := range s.ExcludeFilters {
-		if filter.ApplyDiskFilter(disk) {
-			logrus.Debugf("block device /dev/%s ignored by %s", disk.Name, filter.Name)
-			return true
-		}
+	// Should we do this somewhere else?  Or have error returns from these functions if looking up
+	// the configmap fails (probably the latter...)
+	//	We should definitely do this somewhere else, when the scanner wakes!  So it only happens once
+	ndmConfigMap, err := s.ConfigMapCache.Get("harvester-system", "harvester-node-disk-manager", metav1.GetOptions{})
+	if err != nil {
+		// TODO: fixme
+		logrus.Errorf("Ignoring %s because %v", disk.Name, err.Error())
+		return true
 	}
+	filtersYaml, ok := ndmConfigMap.Data["filters.yaml"]
+	if !ok {
+		// No filters configured
+		return false
+	}
+	var filters []ExcludeFilter
+	err = yaml.Unmarshal([]byte(filtersYaml), &filters)
+	if err != nil {
+		// TODO: fixme
+		logrus.Errorf("Something's badly broken %v", err.Error())
+		return true
+	}
+	logrus.Infof("%+v", filters)
+
+	/*
+		for _, filter := range s.ExcludeFilters {
+			if filter.ApplyDiskFilter(disk) {
+				logrus.Debugf("block device /dev/%s ignored by %s", disk.Name, filter.Name)
+				return true
+			}
+		}
+	*/
 	return false
 }
 
@@ -252,12 +286,13 @@ func (s *Scanner) ApplyExcludeFiltersForDisk(disk *block.Disk) bool {
 // registered exclude filters. If the partition meets one of the criteria, it
 // returns true.
 func (s *Scanner) ApplyExcludeFiltersForPartition(part *block.Partition) bool {
-	for _, filter := range s.ExcludeFilters {
-		if filter.ApplyPartFilter(part) {
-			logrus.Debugf("block device /dev/%s ignored by %s", part.Name, filter.Name)
-			return true
-		}
-	}
+	/*
+		for _, filter := range s.ExcludeFilters {
+			if filter.ApplyPartFilter(part) {
+				logrus.Debugf("block device /dev/%s ignored by %s", part.Name, filter.Name)
+				return true
+			}
+		}*/
 	return false
 }
 
@@ -265,12 +300,13 @@ func (s *Scanner) ApplyExcludeFiltersForPartition(part *block.Partition) bool {
 // registered auto-provision filters. If the disk meets one of the criteria, it
 // returns true.
 func (s *Scanner) ApplyAutoProvisionFiltersForDisk(disk *block.Disk) bool {
-	for _, filter := range s.AutoProvisionFilters {
-		if filter.ApplyDiskFilter(disk) {
-			logrus.Debugf("block device /dev/%s is promoted to auto-provision by %s", disk.Name, filter.Name)
-			return true
-		}
-	}
+	/*
+		for _, filter := range s.AutoProvisionFilters {
+			if filter.ApplyDiskFilter(disk) {
+				logrus.Debugf("block device /dev/%s is promoted to auto-provision by %s", disk.Name, filter.Name)
+				return true
+			}
+		}*/
 	return false
 }
 

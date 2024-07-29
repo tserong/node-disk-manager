@@ -26,13 +26,14 @@ import (
 	"github.com/harvester/node-disk-manager/pkg/block"
 	blockdevicev1 "github.com/harvester/node-disk-manager/pkg/controller/blockdevice"
 	nodev1 "github.com/harvester/node-disk-manager/pkg/controller/node"
-	"github.com/harvester/node-disk-manager/pkg/filter"
 	ctldisk "github.com/harvester/node-disk-manager/pkg/generated/controllers/harvesterhci.io"
 	ctllonghorn "github.com/harvester/node-disk-manager/pkg/generated/controllers/longhorn.io"
 	"github.com/harvester/node-disk-manager/pkg/option"
 	"github.com/harvester/node-disk-manager/pkg/udev"
 	"github.com/harvester/node-disk-manager/pkg/utils"
 	"github.com/harvester/node-disk-manager/pkg/version"
+
+	ctlcore "github.com/rancher/wrangler/v2/pkg/generated/controllers/core"
 )
 
 func main() {
@@ -92,32 +93,6 @@ func main() {
 			EnvVars:     []string{"NODE_NAME"},
 			Usage:       "Specify the node name",
 			Destination: &opt.NodeName,
-		},
-		&cli.StringFlag{
-			Name:        "vendor-filter",
-			Value:       "longhorn",
-			DefaultText: "longhorn",
-			EnvVars:     []string{"NDM_VENDOR_FILTER"},
-			Usage:       "A string of comma-separated values that you want to exclude for block device vendor filter",
-			Destination: &opt.VendorFilter,
-		},
-		&cli.StringFlag{
-			Name:        "path-filter",
-			EnvVars:     []string{"NDM_PATH_FILTER"},
-			Usage:       "A string of comma-separated values that you want to exclude for block device path filter",
-			Destination: &opt.PathFilter,
-		},
-		&cli.StringFlag{
-			Name:        "label-filter",
-			EnvVars:     []string{"NDM_LABEL_FILTER"},
-			Usage:       "A string of comma-separated glob patterns that you want to exclude for block device filesystem label filter",
-			Destination: &opt.LabelFilter,
-		},
-		&cli.StringFlag{
-			Name:        "auto-provision-filter",
-			EnvVars:     []string{"NDM_AUTO_PROVISION_FILTER"},
-			Usage:       "A string of comma-separated glob patterns that auto-provisions devices matching provided device path",
-			Destination: &opt.AutoProvisionFilter,
 		},
 		&cli.UintFlag{
 			Name:        "max-concurrent-ops",
@@ -213,20 +188,23 @@ func run(opt *option.Option) error {
 		return fmt.Errorf("error building node-disk-manager controllers: %s", err.Error())
 	}
 
+	core, err := ctlcore.NewFactoryFromConfig(kubeConfig)
+	if err != nil {
+		return fmt.Errorf("error building core controllers: %s", err.Error())
+	}
+
 	terminatedChannel := make(chan bool, 1)
-	excludeFilters := filter.SetExcludeFilters(opt.VendorFilter, opt.PathFilter, opt.LabelFilter)
-	autoProvisionFilters := filter.SetAutoProvisionFilters(opt.AutoProvisionFilter)
 	locker := &sync.Mutex{}
 	cond := sync.NewCond(locker)
 	bds := disks.Harvesterhci().V1beta1().BlockDevice()
 	nodes := lhs.Longhorn().V1beta2().Node()
+	configMapCache := core.Core().V1().ConfigMap()
 	scanner := blockdevicev1.NewScanner(
 		opt.NodeName,
 		opt.Namespace,
+		configMapCache,
 		bds,
 		block,
-		excludeFilters,
-		autoProvisionFilters,
 		cond,
 		false,
 		&terminatedChannel,
