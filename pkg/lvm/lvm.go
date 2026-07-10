@@ -62,6 +62,10 @@ func executeCommandWithNS(cmd string, args []string) error {
 	return nil
 }
 
+func DoAddDevice(devPath string) error {
+	return executeCommandWithNS("lvmdevices", []string{"--adddev", devPath})
+}
+
 func DoPVCreate(devPath string) error {
 	return executeCommandWithNS("pvcreate", []string{devPath})
 }

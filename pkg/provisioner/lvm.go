@@ -45,6 +45,10 @@ func (l *LVMProvisioner) GetProvisionerName() string {
 
 // Format operation on the LVM use to ensure the device is clean and ready to be used by LVM.
 func (l *LVMProvisioner) Format(devPath string) (isFormatComplete, isRequeueNeeded bool, err error) {
+	// Make sure LVM knows about the device
+	if err = lvm.DoAddDevice(devPath); err != nil {
+		return false, true, err
+	}
 	// Check if the specified VG exists. The device path of the PV and the
 	// name of the VG must match, otherwise wipe the device.
 	pvResult, err := lvm.GetPVScanResult()
